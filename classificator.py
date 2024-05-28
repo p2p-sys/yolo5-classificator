@@ -1,6 +1,7 @@
 import os
 from datetime import date
 import cv2
+import requests
 import yolov5
 from tqdm import tqdm
 from PIL import Image, ImageDraw, ImageFont
@@ -8,6 +9,7 @@ import numpy as np
 import random
 from config import *
 
+# List of objects for Objects365 and COCO datasets
 objects365 = ['Person', 'Sneakers', 'Chair', 'Other Shoes', 'Hat', 'Car', 'Lamp', 'Glasses', 'Bottle', 'Desk', 'Cup',
               'Street Lights', 'Cabinet/shelf', 'Handbag/Satchel', 'Bracelet', 'Plate', 'Picture/Frame', 'Helmet',
               'Book',
@@ -77,6 +79,7 @@ coco80 = ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 
           'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear',
           'hair drier', 'toothbrush']
 
+# Combine and sort the object lists
 items = []
 for item in coco80:
     items.append(item.lower())
@@ -87,6 +90,7 @@ for item in objects365:
 combined_objects = list(set(items))
 combined_objects.sort()
 
+# Define the weights for room objects
 room_objects_weights = {
     'Bedroom': {
         'bed': (0.4, 0.2), 'pillow': (0.2, 0.1), 'nightstand': (0.1, 0.1),
@@ -189,6 +193,7 @@ room_objects_weights = {
 }
 
 
+# Function to calculate the room match score
 def calculate_room_match(detected_objects, room_objects_weights):
     room_scores = {}
     for room, objects_weights in room_objects_weights.items():
@@ -199,12 +204,13 @@ def calculate_room_match(detected_objects, room_objects_weights):
             volume_contribution = detected_objects.get(f'{obj_lower}_volume', 0) * volume_weight
             room_score += contribution + volume_contribution
         total_weight = sum(weight + volume_weight for weight, volume_weight in objects_weights.values())
-        room_scores[room] = (room_score / total_weight) * 100  # Процент совпадения
+        room_scores[room] = (room_score / total_weight) * 100  # Percentage match
     sorted_rooms = sorted(room_scores.items(), key=lambda x: x[1], reverse=True)
     filtered_rooms = [(room, score) for room, score in sorted_rooms if score >= 10]
     return filtered_rooms[:5]
 
 
+# Function to add room labels to the image
 def add_room_labels(image, room_scores):
     if not room_scores:
         return image
@@ -239,6 +245,7 @@ def add_room_labels(image, room_scores):
     return image
 
 
+# Function to draw detected objects on the image
 def draw_detected_objects(image, results, class_names, obj365=False):
     for *xyxy, conf, cls in results:
         if conf < tolerance:
@@ -256,6 +263,7 @@ def draw_detected_objects(image, results, class_names, obj365=False):
     return image
 
 
+# Function to plot a bounding box on the image
 def plot_one_box(xyxy, img, color=None, label=None, line_thickness=None):
     tl = line_thickness or int(round(0.002 * max(img.shape[0:2])))  # line thickness
     color = color or [random.randint(0, 255) for _ in range(3)]
@@ -269,6 +277,7 @@ def plot_one_box(xyxy, img, color=None, label=None, line_thickness=None):
         cv2.putText(img, label, (c1[0], c1[1] - 2), 0, tl / 3, [225, 255, 255], thickness=tf, lineType=cv2.LINE_AA)
 
 
+# Function to filter and process images
 def filter_and_process_images(model_objects365, model_coco, path_name, result_dir):
     items = [os.path.join(root, file) for root, _, files in os.walk(path_name) for file in files if
              file.lower().endswith('.jpg')]
@@ -309,7 +318,8 @@ def filter_and_process_images(model_objects365, model_coco, path_name, result_di
 
             if objects_labels:
                 # Objects365
-                img_with_labels = draw_detected_objects(img_with_labels, results_objects365.xyxy[0], model_objects365.names,
+                img_with_labels = draw_detected_objects(img_with_labels, results_objects365.xyxy[0],
+                                                        model_objects365.names,
                                                         obj365=True)
 
                 # COCO
@@ -326,18 +336,51 @@ def filter_and_process_images(model_objects365, model_coco, path_name, result_di
                 if class_labels:
                     img_with_labels = add_room_labels(img_with_labels, room_scores)
 
-                room_dir = os.path.join(result_dir, max_room)
+                room_dir = os.path.join(result_dir, max_room+'s')
                 if not os.path.exists(room_dir):
                     os.makedirs(room_dir)
 
                 filename = os.path.basename(item)
                 cv2.imwrite(f"{room_dir}/{filename}", img_with_labels)
+
+            if delete_processed_file:
+                os.remove(item)
+
         except Exception as e:
             # print(f"Error processing file {item}: {e}")
             pass
 
 
+# Function to download a file
+def download_file(url, dest_path):
+    response = requests.get(url, stream=True)
+    response.raise_for_status()
+    with open(dest_path, 'wb') as file:
+        for chunk in response.iter_content(chunk_size=8192):
+            file.write(chunk)
+
+
 if __name__ == '__main__':
+
+    # Path to the models directory
+    models_dir = os.path.join(os.getcwd(), 'models')
+    # Create the models directory if it doesn't exist
+    os.makedirs(models_dir, exist_ok=True)
+
+    # Full paths to the model files
+    model_coco_path = os.path.join(models_dir, model_coco_filename)
+    model_365_path = os.path.join(models_dir, model_365_filename)
+
+    # Check and download the models
+    if not os.path.exists(model_coco_path):
+        print(f"Downloading COCO model to {model_coco_path}...")
+        download_file(model_coco_url, model_coco_path)
+        print(f"COCO model downloaded successfully.")
+
+    if not os.path.exists(model_365_path):
+        print(f"Downloading 365 model to {model_365_path}...")
+        download_file(model_365_url, model_365_path)
+        print(f"365 model downloaded successfully.")
 
     if debug:
         used_objects = set()
@@ -351,7 +394,7 @@ if __name__ == '__main__':
 
         print(f"Bad: {new_objects}")
 
-    model_objects365 = yolov5.load('models/Objects365.pt')
+    model_objects365 = yolov5.load(model_365_path)
     # set model parameters
     model_objects365.conf = 0.25  # NMS confidence threshold
     model_objects365.iou = 0.45  # NMS IoU threshold
@@ -359,7 +402,7 @@ if __name__ == '__main__':
     model_objects365.multi_label = False  # NMS multiple labels per box
     model_objects365.max_det = 1000  # maximum number of detections per image
 
-    model_coco = yolov5.load('models/yolov5x6.pt')
+    model_coco = yolov5.load(model_coco_path)
     # set model parameters
     model_coco.conf = 0.25  # NMS confidence threshold
     model_coco.iou = 0.45  # NMS IoU threshold
