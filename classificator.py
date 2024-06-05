@@ -8,6 +8,8 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import random
 from config import *
+import torch
+    
 
 # List of objects for Objects365 and COCO datasets
 objects365 = ['Person', 'Sneakers', 'Chair', 'Other Shoes', 'Hat', 'Car', 'Lamp', 'Glasses', 'Bottle', 'Desk', 'Cup',
@@ -276,23 +278,29 @@ def plot_one_box(xyxy, img, color=None, label=None, line_thickness=None):
         cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)  # filled
         cv2.putText(img, label, (c1[0], c1[1] - 2), 0, tl / 3, [225, 255, 255], thickness=tf, lineType=cv2.LINE_AA)
 
-
-# Function to filter and process images
 def filter_and_process_images(model_objects365, model_coco, path_name, result_dir):
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model_objects365.to(device)
+    model_coco.to(device)
+
     items = [os.path.join(root, file) for root, _, files in os.walk(path_name) for file in files if
              file.lower().endswith('.jpg')]
     total = len(items)
 
     for item in tqdm(items, total=total):
         try:
-            results_objects365 = model_objects365(item, size=1280)
-            results_coco = model_coco(item, size=1280)
+            img = cv2.imread(item)
+            if img is None:
+                continue  
+
+            results_objects365 = model_objects365(item, size=1280, device=device)
+            results_coco = model_coco(item, size=1280, device=device)
 
             img_with_labels = cv2.imread(item)
 
             detected_objects = {}
 
-            for *xyxy, conf, cls in results_objects365.xyxy[0]:
+            for *xyxy, conf, cls in results_objects365.xyxy[0].to(device):
                 if conf < tolerance:
                     continue
                 obj_name = model_objects365.names[int(cls)]
@@ -304,7 +312,7 @@ def filter_and_process_images(model_objects365, model_coco, path_name, result_di
                     detected_objects[obj_name] = conf.item()
                     detected_objects[f'{obj_name}_volume'] = area
 
-            for *xyxy, conf, cls in results_coco.xyxy[0]:
+            for *xyxy, conf, cls in results_coco.xyxy[0].to(device):
                 if conf < tolerance:
                     continue
                 obj_name = model_coco.names[int(cls)]
@@ -336,7 +344,7 @@ def filter_and_process_images(model_objects365, model_coco, path_name, result_di
                 if class_labels:
                     img_with_labels = add_room_labels(img_with_labels, room_scores)
 
-                room_dir = os.path.join(result_dir, max_room+'s')
+                room_dir = os.path.join(result_dir, max_room + 's')
                 if not os.path.exists(room_dir):
                     os.makedirs(room_dir)
 
