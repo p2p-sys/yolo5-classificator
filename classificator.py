@@ -1,15 +1,20 @@
 import os
+import traceback
 from datetime import date
 import cv2
 import requests
+import torch
 import yolov5
 from tqdm import tqdm
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import random
+import warnings
 from config import *
-import torch
-    
+
+warnings.filterwarnings("ignore", "(Possibly )?corrupt EXIF data", UserWarning)
+warnings.filterwarnings("ignore", "Corrupt JPEG data", UserWarning)
+warnings.filterwarnings("ignore", category=UserWarning, module='PIL')
 
 # List of objects for Objects365 and COCO datasets
 objects365 = ['Person', 'Sneakers', 'Chair', 'Other Shoes', 'Hat', 'Car', 'Lamp', 'Glasses', 'Bottle', 'Desk', 'Cup',
@@ -249,6 +254,8 @@ def add_room_labels(image, room_scores):
 
 # Function to draw detected objects on the image
 def draw_detected_objects(image, results, class_names, obj365=False):
+    image_tensor = torch.from_numpy(image).to(device)
+
     for *xyxy, conf, cls in results:
         if conf < tolerance:
             continue
@@ -261,8 +268,8 @@ def draw_detected_objects(image, results, class_names, obj365=False):
             color = (255, 0, 0)  # Blue for other models
 
         plot_one_box(xyxy, image, label=label, color=color, line_thickness=2)
-
-    return image
+    processed_image = image_tensor.cpu().numpy()
+    return processed_image
 
 
 # Function to plot a bounding box on the image
@@ -278,29 +285,23 @@ def plot_one_box(xyxy, img, color=None, label=None, line_thickness=None):
         cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)  # filled
         cv2.putText(img, label, (c1[0], c1[1] - 2), 0, tl / 3, [225, 255, 255], thickness=tf, lineType=cv2.LINE_AA)
 
-def filter_and_process_images(model_objects365, model_coco, path_name, result_dir):
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model_objects365.to(device)
-    model_coco.to(device)
 
+# Function to filter and process images
+def filter_and_process_images(model_objects365, model_coco, path_name, result_dir):
     items = [os.path.join(root, file) for root, _, files in os.walk(path_name) for file in files if
              file.lower().endswith('.jpg')]
     total = len(items)
 
     for item in tqdm(items, total=total):
         try:
-            img = cv2.imread(item)
-            if img is None:
-                continue  
-
-            results_objects365 = model_objects365(item, size=1280, device=device)
-            results_coco = model_coco(item, size=1280, device=device)
+            results_objects365 = model_objects365(item, size=1280)
+            results_coco = model_coco(item, size=1280)
 
             img_with_labels = cv2.imread(item)
 
             detected_objects = {}
 
-            for *xyxy, conf, cls in results_objects365.xyxy[0].to(device):
+            for *xyxy, conf, cls in results_objects365.xyxy[0]:
                 if conf < tolerance:
                     continue
                 obj_name = model_objects365.names[int(cls)]
@@ -312,7 +313,7 @@ def filter_and_process_images(model_objects365, model_coco, path_name, result_di
                     detected_objects[obj_name] = conf.item()
                     detected_objects[f'{obj_name}_volume'] = area
 
-            for *xyxy, conf, cls in results_coco.xyxy[0].to(device):
+            for *xyxy, conf, cls in results_coco.xyxy[0]:
                 if conf < tolerance:
                     continue
                 obj_name = model_coco.names[int(cls)]
@@ -355,7 +356,8 @@ def filter_and_process_images(model_objects365, model_coco, path_name, result_di
                 os.remove(item)
 
         except Exception as e:
-            # print(f"Error processing file {item}: {e}")
+            traceback_str = traceback.format_exc()
+            print(f"Error {traceback_str} in processing file {item}: {e}")
             pass
 
 
@@ -369,6 +371,9 @@ def download_file(url, dest_path):
 
 
 if __name__ == '__main__':
+
+    device_str = 'cuda:0' if torch.cuda.is_available() else 'cpu'  # Строка устройства для передачи в yolov5
+    print(f"Using device: {device_str}")
 
     # Path to the models directory
     models_dir = os.path.join(os.getcwd(), 'models')
@@ -402,7 +407,7 @@ if __name__ == '__main__':
 
         print(f"Bad: {new_objects}")
 
-    model_objects365 = yolov5.load(model_365_path)
+    model_objects365 = yolov5.load(model_365_path, device=device_str)
     # set model parameters
     model_objects365.conf = 0.25  # NMS confidence threshold
     model_objects365.iou = 0.45  # NMS IoU threshold
@@ -410,7 +415,7 @@ if __name__ == '__main__':
     model_objects365.multi_label = False  # NMS multiple labels per box
     model_objects365.max_det = 1000  # maximum number of detections per image
 
-    model_coco = yolov5.load(model_coco_path)
+    model_coco = yolov5.load(model_coco_path, device=device_str)
     # set model parameters
     model_coco.conf = 0.25  # NMS confidence threshold
     model_coco.iou = 0.45  # NMS IoU threshold
