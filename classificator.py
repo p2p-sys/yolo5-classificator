@@ -253,8 +253,9 @@ def add_room_labels(image, room_scores):
 
 
 # Function to draw detected objects on the image
-def draw_detected_objects(image, results, class_names, obj365=False):
-    image_tensor = torch.from_numpy(image).to(device)
+def draw_detected_objects(image, results, class_names, device, obj365=False):
+
+    image_tensor = torch.from_numpy(image).to(device).permute(2, 0, 1).float()
 
     for *xyxy, conf, cls in results:
         if conf < tolerance:
@@ -268,7 +269,9 @@ def draw_detected_objects(image, results, class_names, obj365=False):
             color = (255, 0, 0)  # Blue for other models
 
         plot_one_box(xyxy, image, label=label, color=color, line_thickness=2)
-    processed_image = image_tensor.cpu().numpy()
+
+    processed_image = image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+
     return processed_image
 
 
@@ -287,7 +290,7 @@ def plot_one_box(xyxy, img, color=None, label=None, line_thickness=None):
 
 
 # Function to filter and process images
-def filter_and_process_images(model_objects365, model_coco, path_name, result_dir):
+def filter_and_process_images(model_objects365, model_coco, path_name, result_dir, device):
     items = [os.path.join(root, file) for root, _, files in os.walk(path_name) for file in files if
              file.lower().endswith('.jpg')]
     total = len(items)
@@ -329,10 +332,10 @@ def filter_and_process_images(model_objects365, model_coco, path_name, result_di
                 # Objects365
                 img_with_labels = draw_detected_objects(img_with_labels, results_objects365.xyxy[0],
                                                         model_objects365.names,
-                                                        obj365=True)
+                                                        device, obj365=True)
 
                 # COCO
-                img_with_labels = draw_detected_objects(img_with_labels, results_coco.xyxy[0], model_coco.names)
+                img_with_labels = draw_detected_objects(img_with_labels, results_coco.xyxy[0], model_coco.names, device)
 
             room_scores = calculate_room_match(detected_objects, room_objects_weights)
 
@@ -372,7 +375,12 @@ def download_file(url, dest_path):
 
 if __name__ == '__main__':
 
-    device_str = 'cuda:0' if torch.cuda.is_available() else 'cpu'  # Строка устройства для передачи в yolov5
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    if device == 'cuda':
+        device_str = 'cuda:0'
+    else:
+        device_str = 'cpu'
+
     print(f"Using device: {device_str}")
 
     # Path to the models directory
@@ -430,7 +438,7 @@ if __name__ == '__main__':
         os.makedirs(result_dir)
 
     try:
-        filter_and_process_images(model_objects365, model_coco, images_dir, result_dir)
+        filter_and_process_images(model_objects365, model_coco, images_dir, result_dir, device)
     except KeyboardInterrupt:
         print("Process interrupted by user")
     except Exception as e:
