@@ -10,6 +10,26 @@ This program is designed to perform object detection and classification using YO
 - Option to label images with room types.
 - Option to delete processed images after processing.
 
+## Room types
+Bedrooms
+Living Rooms
+Children's Rooms
+Bathrooms
+Toilets
+Garages
+Cosmetology Rooms
+Hospitals
+Classrooms
+Flower Shops
+Offices (Lobby)
+Cafes
+Storage Rooms
+Outdoors
+Gazebos
+Offices
+Verandas/Patios
+Kitchens  
+
 ### Prerequisites
 
 - Python 3.7 or higher
